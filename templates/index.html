@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ATS Resume Analysis System</title>
+    {% for css_file in css_files %}
+    <link rel="stylesheet" href="/static/css/{{ css_file }}">
+    {% endfor %}
+</head>
+<body>
+    <div id="root"></div>
+    {% for js_file in js_files %}
+    <script src="/static/js/{{ js_file }}"></script>
+    {% endfor %}
+</body>
+</html>
