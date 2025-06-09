@@ -2,6 +2,7 @@ from flask import Flask, request, render_template, jsonify, send_from_directory
 import uuid
 import os
 import logging
+import re
 from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
 from document_parser import parse_document
@@ -44,6 +45,30 @@ try:
 except Exception as e:
     logger.error(f"Failed to configure Gemini API: {e}")
     exit(1)
+
+def extract_required_experience(job_description: str) -> int:
+    """
+    Extract required years of experience from the job description using regex.
+    Looks for patterns like 'X years of experience', 'X+ years', etc.
+    Returns 0 if no experience requirement is found.
+    """
+    # Regex to match patterns like '3 years', '5+ years', '3-5 years', etc.
+    patterns = [
+        r'(\d+)\s*(?:\+|-)?\s*(?:years?|yrs?)\s*(?:of\s*)?(?:experience)',  # e.g., '3 years of experience', '5+ years'
+        r'(\d+)-(\d+)\s*(?:years?|yrs?)\s*(?:of\s*)?(?:experience)'         # e.g., '3-5 years of experience'
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, job_description, re.IGNORECASE)
+        if match:
+            if pattern == patterns[1]:  # Range like '3-5 years'
+                lower, upper = int(match.group(1)), int(match.group(2))
+                return lower  # Take the lower bound as the minimum requirement
+            else:  # Single value like '3 years'
+                return int(match.group(1))
+    
+    logger.warning("No experience requirement found in job description, defaulting to 0 years.")
+    return 0
 
 def store_resume_in_mongo(resume_id: str, masked_text: str, mappings: dict, collection_id: str) -> dict:
     resume_data = {
@@ -110,12 +135,13 @@ def index():
 @app.route('/analyze', methods=['POST'])
 def analyze_resumes():
     try:
-        if 'resumes' not in request.files or not request.form.get('job_description') or not request.form.get('required_experience'):
-            return jsonify({"error": "Missing resumes, job description, or required experience"}), 400
+        if 'resumes' not in request.files or not request.form.get('job_description'):
+            return jsonify({"error": "Missing resumes or job description"}), 400
 
         resumes = request.files.getlist('resumes')
         job_description = request.form['job_description']
-        required_experience = int(request.form['required_experience'])
+        # Extract required experience from job description
+        required_experience = extract_required_experience(job_description)
         results = []
 
         if not os.path.exists(app.config['UPLOAD_FOLDER']):

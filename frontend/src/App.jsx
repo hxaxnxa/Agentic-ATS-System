@@ -1,11 +1,10 @@
 import React, { useState } from 'react';
 import axios from 'axios';
-import { Upload, FileText, BarChart3, Download, Target, Eye } from 'lucide-react';
+import { Upload, FileText, BarChart3, Download, Target, Eye, Trash2 } from 'lucide-react';
 
 function App() {
   const [resumes, setResumes] = useState([]);
   const [jobDescription, setJobDescription] = useState('');
-  const [requiredExperience, setRequiredExperience] = useState(0);
   const [results, setResults] = useState([]);
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState(null);
@@ -14,7 +13,12 @@ function App() {
   const [isDragOver, setIsDragOver] = useState(false);
 
   const handleFileChange = (e) => {
-    setResumes(Array.from(e.target.files));
+    const newFiles = Array.from(e.target.files);
+    // Filter out duplicates based on file name
+    const uniqueNewFiles = newFiles.filter(
+      (newFile) => !resumes.some((existingFile) => existingFile.name === newFile.name)
+    );
+    setResumes((prev) => [...prev, ...uniqueNewFiles]);
   };
 
   const handleDragOver = (e) => {
@@ -36,7 +40,15 @@ function App() {
         file.type === "application/pdf" ||
         file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     );
-    setResumes((prev) => [...prev, ...validFiles]);
+    // Filter out duplicates based on file name
+    const uniqueValidFiles = validFiles.filter(
+      (newFile) => !resumes.some((existingFile) => existingFile.name === newFile.name)
+    );
+    setResumes((prev) => [...prev, ...uniqueValidFiles]);
+  };
+
+  const removeFile = (fileName) => {
+    setResumes((prev) => prev.filter((file) => file.name !== fileName));
   };
 
   const handleAnalyze = async () => {
@@ -51,6 +63,9 @@ function App() {
     }
     setError(null);
     setAnalyzing(true);
+    // Clear previous results and visibility state before starting a new analysis
+    setResults([]);
+    setVisibleContent({});
 
     try {
       const formData = new FormData();
@@ -58,7 +73,6 @@ function App() {
         formData.append('resumes', file);
       });
       formData.append('job_description', jobDescription);
-      formData.append('required_experience', requiredExperience);
 
       const response = await axios.post('/analyze', formData, {
         headers: {
@@ -85,7 +99,7 @@ function App() {
   const toggleContent = (id) => {
     setVisibleContent((prev) => ({
       ...prev,
-      [id]: !prev[id]
+      [id]: !prev[id] || false, // Ensure toggling works correctly
     }));
   };
 
@@ -103,9 +117,24 @@ function App() {
   };
 
   const getScoreColor = (score) => {
-    if (score >= 80) return 'text-green-600 bg-green-50';
-    if (score >= 60) return 'text-yellow-600 bg-yellow-50';
+    if (score > 70) return 'text-green-600 bg-green-50';
+    if (score >= 50) return 'text-yellow-600 bg-yellow-50';
     return 'text-red-600 bg-red-50';
+  };
+
+  const sortByScore = () => {
+    setResults((prevResults) => {
+      // Create a new sorted array based on score (highest to lowest)
+      const sortedResults = [...prevResults].sort((a, b) => b.score - a.score);
+      // Update visibility state to match new order
+      const newVisibleContent = {};
+      sortedResults.forEach((_, index) => {
+        newVisibleContent[`pain-points-${index}`] = visibleContent[`pain-points-${index}`] || false;
+        newVisibleContent[`summary-${index}`] = visibleContent[`summary-${index}`] || false;
+      });
+      setVisibleContent(newVisibleContent);
+      return sortedResults;
+    });
   };
 
   return (
@@ -172,11 +201,20 @@ function App() {
                     </p>
                     <div className="space-y-2">
                       {resumes.map((file, index) => (
-                        <div key={index} className="flex items-center gap-2 text-sm text-gray-700">
-                          <FileText className="w-4 h-4 text-blue-600" />
-                          <span className="font-medium">{index + 1}.</span>
-                          <span>{file.name}</span>
-                          <span className="text-gray-500">({(file.size / 1024).toFixed(0)} KB)</span>
+                        <div key={file.name} className="flex items-center justify-between gap-2 text-sm text-gray-700">
+                          <div className="flex items-center gap-2">
+                            <FileText className="w-4 h-4 text-blue-600" />
+                            <span className="font-medium">{index + 1}.</span>
+                            <span>{file.name}</span>
+                            <span className="text-gray-500">({(file.size / 1024).toFixed(0)} KB)</span>
+                          </div>
+                          <button
+                            onClick={() => removeFile(file.name)}
+                            className="text-red-600 hover:text-red-800 transition-colors"
+                            title="Remove file"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
                         </div>
                       ))}
                     </div>
@@ -200,21 +238,6 @@ function App() {
               <div className="p-6 space-y-6">
                 <div>
                   <label className="block text-gray-700 font-semibold mb-2">
-                    Required Experience (years)
-                  </label>
-                  <select
-                    value={requiredExperience}
-                    onChange={(e) => setRequiredExperience(e.target.value)}
-                    className="w-24 bg-white border-2 border-blue-200 rounded-lg p-3 text-gray-700 focus:border-blue-400 focus:ring-2 focus:ring-blue-200 focus:outline-none"
-                  >
-                    {Array.from({ length: 21 }, (_, i) => (
-                      <option key={i} value={i}>{i}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-gray-700 font-semibold mb-2">
                     Job Description
                   </label>
                   <textarea
@@ -223,10 +246,11 @@ function App() {
                     placeholder="Enter detailed job description including:
 • Required skills and technologies
 • Key responsibilities  
+• Required years of experience (e.g., '3+ years of experience')
 • Educational qualifications
 • Preferred certifications
 • Company culture fit criteria..."
-                    className="w-full h-48 bg-white border-2 border-blue-200 rounded-lg p-3 text-gray-700 focus:border-blue-400 focus:ring-2 focus:ring-blue-200 focus:outline-none resize-none"
+                    className="w-full h-72 bg-white border-2 border-blue-200 rounded-lg p-3 text-gray-700 focus:border-blue-400 focus:ring-2 focus:ring-blue-200 focus:outline-none resize-none"
                   />
                 </div>
 
@@ -311,11 +335,44 @@ function App() {
                           </button>
                           {visibleContent[`pain-points-${index}`] && (
                             <div className="mt-2 bg-gray-50 rounded-lg p-3">
-                              <ul className="list-disc pl-5 text-sm text-gray-700 space-y-1">
-                                {result.pain_points.map((point, i) => (
-                                  <li key={i}>{point}</li>
-                                ))}
-                              </ul>
+                              <div className="text-sm text-gray-700 space-y-2">
+                                <div>
+                                  <strong className="text-red-600">Critical Issues:</strong>
+                                  <ul className="list-disc pl-5">
+                                    {result.pain_points.critical.length > 0 ? (
+                                      result.pain_points.critical.map((point, i) => (
+                                        <li key={i}>{point}</li>
+                                      ))
+                                    ) : (
+                                      <li>None identified.</li>
+                                    )}
+                                  </ul>
+                                </div>
+                                <div>
+                                  <strong className="text-yellow-600">Major Issues:</strong>
+                                  <ul className="list-disc pl-5">
+                                    {result.pain_points.major.length > 0 ? (
+                                      result.pain_points.major.map((point, i) => (
+                                        <li key={i}>{point}</li>
+                                      ))
+                                    ) : (
+                                      <li>None identified.</li>
+                                    )}
+                                  </ul>
+                                </div>
+                                <div>
+                                  <strong className="text-blue-600">Minor Issues:</strong>
+                                  <ul className="list-disc pl-5">
+                                    {result.pain_points.minor.length > 0 ? (
+                                      result.pain_points.minor.map((point, i) => (
+                                        <li key={i}>{point}</li>
+                                      ))
+                                    ) : (
+                                      <li>None identified.</li>
+                                    )}
+                                  </ul>
+                                </div>
+                              </div>
                             </div>
                           )}
                         </td>
@@ -352,6 +409,15 @@ function App() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+              <div className="p-6">
+                <button
+                  onClick={sortByScore}
+                  className="bg-gradient-to-r from-blue-600 to-blue-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg hover:from-blue-700 hover:to-blue-800 hover:shadow-xl hover:-translate-y-1 transition-all duration-300 flex items-center justify-center gap-2"
+                >
+                  <BarChart3 className="w-4 h-4" />
+                  Sort by Score (High to Low)
+                </button>
               </div>
             </div>
           ) : (
