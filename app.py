@@ -52,7 +52,6 @@ def extract_required_experience(job_description: str) -> int:
     Looks for patterns like 'X years of experience', 'X+ years', etc.
     Returns 0 if no experience requirement is found.
     """
-    # Regex to match patterns like '3 years', '5+ years', '3-5 years', etc.
     patterns = [
         r'(\d+)\s*(?:\+|-)?\s*(?:years?|yrs?)\s*(?:of\s*)?(?:experience)',  # e.g., '3 years of experience', '5+ years'
         r'(\d+)-(\d+)\s*(?:years?|yrs?)\s*(?:of\s*)?(?:experience)'         # e.g., '3-5 years of experience'
@@ -135,11 +134,33 @@ def index():
 @app.route('/analyze', methods=['POST'])
 def analyze_resumes():
     try:
-        if 'resumes' not in request.files or not request.form.get('job_description'):
-            return jsonify({"error": "Missing resumes or job description"}), 400
+        if 'resumes' not in request.files or (not request.form.get('job_description') and 'job_description_file' not in request.files):
+            return jsonify({"error": "Missing resumes or job description (text or file)"}), 400
 
         resumes = request.files.getlist('resumes')
-        job_description = request.form['job_description']
+        job_description_file = request.files.get('job_description_file')
+        job_description_text = request.form.get('job_description', '')
+
+        # Process job description
+        if job_description_file and job_description_file.filename.endswith(('.pdf', '.docx')):
+            filename = secure_filename(job_description_file.filename)
+            job_description_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            job_description_file.save(job_description_path)
+            logger.info(f"Processing job description file: {filename}")
+            
+            with open(job_description_path, 'rb') as f:
+                jd_data = parse_document(f, filename)
+            job_description = jd_data["full_text"]
+            job_description, _, _ = mask_text(job_description)
+            logger.info("Job description extracted and masked from uploaded file")
+        else:
+            job_description = job_description_text
+            if job_description.strip():
+                job_description, _, _ = mask_text(job_description)
+                logger.info("Job description used from text input and masked")
+            else:
+                return jsonify({"error": "No valid job description provided"}), 400
+
         # Extract required experience from job description
         required_experience = extract_required_experience(job_description)
         results = []
@@ -155,12 +176,14 @@ def analyze_resumes():
                 logger.info(f"Processing resume: {filename}")
                 
                 with open(resume_path, 'rb') as f:
-                    resume_text = parse_document(f, filename)
+                    resume_data = parse_document(f, filename)
+                    resume_text = resume_data["full_text"]
+                    projects = resume_data["projects"]
                 masked_text, mappings, collection_id = mask_text(resume_text)
                 candidate_name = get_candidate_name(masked_text)
                 resume_id = str(uuid.uuid4())
                 store_resume_in_mongo(resume_id, masked_text, mappings, collection_id)
-                result = analyze_resume(masked_text, job_description, required_experience)
+                result = analyze_resume(masked_text, job_description, required_experience, projects)
                 
                 results.append({
                     "resume_name": filename,
@@ -169,6 +192,7 @@ def analyze_resumes():
                     "pain_points": result["pain_points"],
                     "summary": result["summary"],
                     "status": result["status"],
+                    "projects": result["projects"],
                     "resume_path": f"/uploads/{filename}"
                 })
 

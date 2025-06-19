@@ -5,46 +5,87 @@ import { Upload, FileText, BarChart3, Download, Target, Eye, Trash2 } from 'luci
 function App() {
   const [resumes, setResumes] = useState([]);
   const [jobDescription, setJobDescription] = useState('');
+  const [jobDescriptionFile, setJobDescriptionFile] = useState(null);
   const [results, setResults] = useState([]);
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState(null);
   const [visibleContent, setVisibleContent] = useState({});
   const [analyzeClicked, setAnalyzeClicked] = useState(false);
-  const [isDragOver, setIsDragOver] = useState(false);
+  const [isResumeDragOver, setIsResumeDragOver] = useState(false);
+  const [isJDUploadDragOver, setIsJDUploadDragOver] = useState(false);
 
   const handleFileChange = (e) => {
     const newFiles = Array.from(e.target.files);
-    // Filter out duplicates based on file name
     const uniqueNewFiles = newFiles.filter(
       (newFile) => !resumes.some((existingFile) => existingFile.name === newFile.name)
     );
     setResumes((prev) => [...prev, ...uniqueNewFiles]);
   };
 
-  const handleDragOver = (e) => {
-    e.preventDefault();
-    setIsDragOver(true);
+  const handleJDFileChange = (e) => {
+    const file = e.target.files[0];
+    if (file && (file.type === "application/pdf" || file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document")) {
+      setJobDescriptionFile(file);
+      setError(null);
+    } else {
+      setError('Please upload a valid PDF or DOCX file for the job description.');
+    }
   };
 
-  const handleDragLeave = (e) => {
-    e.preventDefault();
-    setIsDragOver(false);
+  const removeJDFile = () => {
+    setJobDescriptionFile(null);
   };
 
-  const handleDrop = (e) => {
+  const handleResumeDragOver = (e) => {
     e.preventDefault();
-    setIsDragOver(false);
+    setIsResumeDragOver(true);
+  };
+
+  const handleResumeDragLeave = (e) => {
+    e.preventDefault();
+    setIsResumeDragOver(false);
+  };
+
+  const handleResumeDrop = (e) => {
+    e.preventDefault();
+    setIsResumeDragOver(false);
     const droppedFiles = Array.from(e.dataTransfer.files);
     const validFiles = droppedFiles.filter(
       (file) =>
         file.type === "application/pdf" ||
         file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     );
-    // Filter out duplicates based on file name
     const uniqueValidFiles = validFiles.filter(
       (newFile) => !resumes.some((existingFile) => existingFile.name === newFile.name)
     );
     setResumes((prev) => [...prev, ...uniqueValidFiles]);
+  };
+
+  const handleJDDragOver = (e) => {
+    e.preventDefault();
+    setIsJDUploadDragOver(true);
+  };
+
+  const handleJDDragLeave = (e) => {
+    e.preventDefault();
+    setIsJDUploadDragOver(false);
+  };
+
+  const handleJDDrop = (e) => {
+    e.preventDefault();
+    setIsJDUploadDragOver(false);
+    const droppedFiles = Array.from(e.dataTransfer.files);
+    const validFiles = droppedFiles.filter(
+      (file) =>
+        file.type === "application/pdf" ||
+        file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    );
+    if (validFiles.length > 0) {
+      setJobDescriptionFile(validFiles[0]);
+      setError(null);
+    } else {
+      setError('Please drop a valid PDF or DOCX file for the job description.');
+    }
   };
 
   const removeFile = (fileName) => {
@@ -53,17 +94,16 @@ function App() {
 
   const handleAnalyze = async () => {
     setAnalyzeClicked(true);
-    if (resumes.length === 0 || !jobDescription.trim()) {
+    if (resumes.length === 0 || (!jobDescription.trim() && !jobDescriptionFile)) {
       if (resumes.length === 0) {
         setError('Please upload at least one resume file.');
-      } else if (!jobDescription.trim()) {
-        setError('Please provide a job description.');
+      } else {
+        setError('Please provide a job description via text or file upload.');
       }
       return;
     }
     setError(null);
     setAnalyzing(true);
-    // Clear previous results and visibility state before starting a new analysis
     setResults([]);
     setVisibleContent({});
 
@@ -72,7 +112,11 @@ function App() {
       resumes.forEach((file) => {
         formData.append('resumes', file);
       });
-      formData.append('job_description', jobDescription);
+      if (jobDescriptionFile) {
+        formData.append('job_description_file', jobDescriptionFile);
+      } else {
+        formData.append('job_description', jobDescription);
+      }
 
       const response = await axios.post('/analyze', formData, {
         headers: {
@@ -86,6 +130,7 @@ function App() {
       results.forEach((_, index) => {
         initialVisibility[`pain-points-${index}`] = false;
         initialVisibility[`summary-${index}`] = false;
+        initialVisibility[`projects-${index}`] = false;
       });
       setVisibleContent(initialVisibility);
     } catch (err) {
@@ -99,7 +144,7 @@ function App() {
   const toggleContent = (id) => {
     setVisibleContent((prev) => ({
       ...prev,
-      [id]: !prev[id] || false, // Ensure toggling works correctly
+      [id]: !prev[id] || false,
     }));
   };
 
@@ -117,20 +162,20 @@ function App() {
   };
 
   const getScoreColor = (score) => {
-    if (score > 70) return 'text-green-600 bg-green-50';
-    if (score >= 50) return 'text-yellow-600 bg-yellow-50';
-    return 'text-red-600 bg-red-50';
-  };
+  if (score >= 70) return 'text-green-600 bg-green-50';
+  else if (score >= 50) return 'text-yellow-600 bg-yellow-50';
+  else return 'text-red-600 bg-red-50';
+};
+
 
   const sortByScore = () => {
     setResults((prevResults) => {
-      // Create a new sorted array based on score (highest to lowest)
       const sortedResults = [...prevResults].sort((a, b) => b.score - a.score);
-      // Update visibility state to match new order
       const newVisibleContent = {};
       sortedResults.forEach((_, index) => {
         newVisibleContent[`pain-points-${index}`] = visibleContent[`pain-points-${index}`] || false;
         newVisibleContent[`summary-${index}`] = visibleContent[`summary-${index}`] || false;
+        newVisibleContent[`projects-${index}`] = visibleContent[`projects-${index}`] || false;
       });
       setVisibleContent(newVisibleContent);
       return sortedResults;
@@ -166,14 +211,14 @@ function App() {
               </div>
               <div className="p-6">
                 <div
-                  className={`border-2 border-dashed rounded-xl p-8 text-center transition-all duration-300 relative ${
-                    isDragOver 
+                  className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors duration-300 relative ${
+                    isResumeDragOver 
                       ? "border-blue-400 bg-blue-50" 
-                      : "border-blue-300 bg-gradient-to-br from-blue-50 to-blue-100 hover:from-blue-100 hover:to-blue-200 hover:border-blue-400 hover:shadow-lg hover:-translate-y-1"
+                      : "border-blue-300 bg-gradient-to-br from-blue-50 to-blue-100 hover:border-blue-400 hover:bg-blue-50"
                   }`}
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                  onDrop={handleDrop}
+                  onDragOver={handleResumeDragOver}
+                  onDragLeave={handleResumeDragLeave}
+                  onDrop={handleResumeDrop}
                 >
                   <input
                     type="file"
@@ -254,6 +299,60 @@ function App() {
                   />
                 </div>
 
+                <div className="bg-white rounded-lg p-4">
+                  <label className="block text-gray-700 font-semibold mb-2">
+                    Upload Job Description (PDF or DOCX)
+                  </label>
+                  <div
+                    className={`border-2 border-dashed rounded-xl p-4 text-center transition-colors duration-300 relative ${
+                      isJDUploadDragOver 
+                        ? "border-blue-400 bg-blue-50" 
+                        : "border-blue-300 bg-gradient-to-br from-blue-50 to-blue-100 hover:border-blue-400 hover:bg-blue-50"
+                    }`}
+                    onDragOver={handleJDDragOver}
+                    onDragLeave={handleJDDragLeave}
+                    onDrop={handleJDDrop}
+                  >
+                    <input
+                      type="file"
+                      accept=".pdf,.docx"
+                      onChange={handleJDFileChange}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                    />
+                    <Upload className="w-6 h-6 mx-auto mb-2 text-blue-600" />
+                    <p className="text-sm font-semibold text-blue-600 mb-1">
+                      Click to upload or drag and drop a job description file
+                    </p>
+                    <p className="text-xs text-gray-600">
+                      Supports PDF or DOCX files
+                    </p>
+                  </div>
+                  {jobDescriptionFile && (
+                    <div className="mt-4 bg-green-50 border border-green-200 rounded-xl p-4">
+                      <p className="text-green-800 font-semibold mb-2 flex items-center gap-2">
+                        <div className="w-5 h-5 bg-green-500 rounded-full flex items-center justify-center">
+                          <span className="text-white text-xs">✓</span>
+                        </div>
+                        Job description file uploaded successfully!
+                      </p>
+                      <div className="flex items-center justify-between gap-2 text-sm text-gray-700">
+                        <div className="flex items-center gap-2">
+                          <FileText className="w-4 h-4 text-blue-600" />
+                          <span>{jobDescriptionFile.name}</span>
+                          <span className="text-gray-500">({(jobDescriptionFile.size / 1024).toFixed(0)} KB)</span>
+                        </div>
+                        <button
+                          onClick={removeJDFile}
+                          className="text-red-600 hover:text-red-800 transition-colors"
+                          title="Remove file"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <button
                   onClick={handleAnalyze}
                   disabled={analyzing}
@@ -311,6 +410,7 @@ function App() {
                       <th className="px-6 py-4 text-left text-sm font-bold text-blue-700">Name</th>
                       <th className="px-6 py-4 text-left text-sm font-bold text-blue-700">HR Score</th>
                       <th className="px-6 py-4 text-left text-sm font-bold text-blue-700">HR Issues</th>
+                      <th className="px-6 py-4 text-left text-sm font-bold text-blue-700">Projects</th>
                       <th className="px-6 py-4 text-left text-sm font-bold text-blue-700">Summary</th>
                       <th className="px-6 py-4 text-left text-sm font-bold text-blue-700">Status</th>
                       <th className="px-6 py-4 text-left text-sm font-bold text-blue-700">Resume</th>
@@ -372,6 +472,33 @@ function App() {
                                     )}
                                   </ul>
                                 </div>
+                              </div>
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-6 py-4">
+                          <button
+                            className="bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg px-3 py-1 text-sm hover:from-blue-700 hover:to-blue-800 transition-all duration-300 flex items-center gap-1"
+                            onClick={() => toggleContent(`projects-${index}`)}
+                          >
+                            <Eye className="w-3 h-3" />
+                            View
+                          </button>
+                          {visibleContent[`projects-${index}`] && (
+                            <div className="mt-2 bg-gray-50 rounded-lg p-3">
+                              <div className="text-sm text-gray-700 space-y-2">
+                                {result.projects.length > 0 ? (
+                                  result.projects.map((project, i) => (
+                                    <div key={i}>
+                                      <strong className="text-blue-600">{project.name}</strong>
+                                      <p><strong>Description:</strong> {project.description}</p>
+                                      <p><strong>Skills:</strong> {project.skills.join(", ") || "None listed"}</p>
+                                      <p><strong>Relevance:</strong> {project.relevance}</p>
+                                    </div>
+                                  ))
+                                ) : (
+                                  <p>No projects identified in the resume.</p>
+                                )}
                               </div>
                             </div>
                           )}

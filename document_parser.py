@@ -1,212 +1,91 @@
-import PyPDF2
-import docx
 import logging
-import re
 from io import BytesIO
-import xml.etree.ElementTree as ET
-import zipfile
+import re
+from typing import Dict, List
+import docx2txt
+import PyPDF2
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, filename='logs.txt', format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def parse_document(file, filename):
+def parse_document(file: BytesIO, filename: str) -> Dict:
     """
-    Parse document (PDF or DOCX) with enhanced resume-specific text extraction.
-    Extracts text from paragraphs, tables, headers, footers, and handles common resume formats.
-    Returns structured text with identified resume sections or raises an exception on failure.
-    """
-    file.seek(0)
-    if filename.endswith(".docx"):
-        try:
-            doc = docx.Document(file)
-            text = []
-            current_section = "General"
-
-            # Common resume section headers (case-insensitive)
-            section_headers = [
-                r'education\b', r'experience\b', r'work experience\b', r'skills\b',
-                r'projects\b', r'certifications\b', r'awards\b', r'publications\b',
-                r'objective\b', r'summary\b', r'professional summary\b'
-            ]
-            section_regex = re.compile('|'.join(section_headers), re.IGNORECASE)
-
-            # Extract text from paragraphs
-            for para in doc.paragraphs:
-                para_text = para.text.strip()
-                if not para_text:
-                    continue
-
-                # Identify section headers
-                if section_regex.search(para_text):
-                    current_section = para_text
-                    text.append(f"\n[SECTION: {current_section}]\n")
-                else:
-                    # Handle bullet points and clean text
-                    cleaned_text = re.sub(r'^\s*[-•*]\s+', '', para_text)  # Remove bullet symbols
-                    if cleaned_text:
-                        text.append(f"{cleaned_text}\n")
-
-            # Extract text from tables (common for skills or experience in resumes)
-            for table in doc.tables:
-                for row in table.rows:
-                    row_text = []
-                    for cell in row.cells:
-                        cell_text = ""
-                        for paragraph in cell.paragraphs:
-                            para_text = paragraph.text.strip()
-                            if para_text:
-                                # Remove bullet symbols in table cells
-                                cleaned_text = re.sub(r'^\s*[-•*]\s+', '', para_text)
-                                cell_text += cleaned_text + " "
-                        if cell_text.strip():
-                            row_text.append(cell_text.strip())
-                    if row_text:
-                        text.append(" | ".join(row_text) + "\n")
-
-            # Extract text from headers and footers (e.g., candidate name, contact info)
-            for section in doc.sections:
-                if section.header:
-                    for para in section.header.paragraphs:
-                        if para.text.strip():
-                            text.append(f"[HEADER] {para.text.strip()}\n")
-                if section.footer:
-                    for para in section.footer.paragraphs:
-                        if para.text.strip():
-                            text.append(f"[FOOTER] {para.text.strip()}\n")
-
-            # Clean up the text
-            full_text = "".join(text)
-            full_text = re.sub(r'\n+', '\n', full_text)  # Remove multiple newlines
-            full_text = re.sub(r'[ \t]+', ' ', full_text)  # Normalize spaces
-
-            if full_text.strip():
-                logger.info(f"Successfully extracted {len(full_text)} characters from DOCX")
-                return full_text.strip()
-            else:
-                # Fall back to advanced DOCX extraction for complex layouts
-                logger.warning("Standard DOCX parsing yielded no text, attempting advanced extraction")
-                advanced_text = extract_text_from_docx_advanced(file)
-                if advanced_text and advanced_text.strip():
-                    logger.info(f"Advanced extraction succeeded, extracted {len(advanced_text)} characters")
-                    return advanced_text.strip()
-                raise ValueError("No text content found in DOCX")
-
-        except Exception as e:
-            logger.error(f"python-docx parsing failed: {e}")
-            # Attempt advanced extraction as a fallback
-            advanced_text = extract_text_from_docx_advanced(file)
-            if advanced_text and advanced_text.strip():
-                logger.info(f"Advanced extraction succeeded, extracted {len(advanced_text)} characters")
-                return advanced_text.strip()
-            raise ValueError(f"Failed to parse DOCX: {str(e)}")
-
-    elif filename.endswith(".pdf"):
-        try:
-            reader = PyPDF2.PdfReader(file)
-            text = []
-            current_section = "General"
-
-            # Common resume section headers (case-insensitive)
-            section_headers = [
-                r'education\b', r'experience\b', r'work experience\b', r'skills\b',
-                r'projects\b', r'certifications\b', r'awards\b', r'publications\b',
-                r'objective\b', r'summary\b', r'professional summary\b'
-            ]
-            section_regex = re.compile('|'.join(section_headers), re.IGNORECASE)
-
-            for page_num, page in enumerate(reader.pages):
-                try:
-                    page_text = page.extract_text() or ""
-                    if not page_text.strip():
-                        continue
-
-                    # Split page text into lines for better section detection
-                    lines = page_text.split('\n')
-                    for line in lines:
-                        line = line.strip()
-                        if not line:
-                            continue
-
-                        # Identify section headers
-                        if section_regex.search(line):
-                            current_section = line
-                            text.append(f"\n[SECTION: {current_section}]\n")
-                        else:
-                            # Remove bullet symbols and clean text
-                            cleaned_line = re.sub(r'^\s*[-•*]\s+', '', line)
-                            if cleaned_line:
-                                text.append(f"{cleaned_line}\n")
-
-                    # Normalize spaces within the page text
-                    page_text = re.sub(r'[ \t]+', ' ', page_text)
-                    page_text = re.sub(r'\n\s*\n', '\n', page_text)
-
-                except Exception as e:
-                    logger.warning(f"Failed to extract text from page {page_num + 1}: {e}")
-                    continue
-
-            # Clean up the text
-            full_text = "".join(text)
-            full_text = re.sub(r'\n+', '\n', full_text)  # Remove multiple newlines
-            full_text = re.sub(r'[ \t]+', ' ', full_text)  # Normalize spaces
-
-            if full_text.strip():
-                logger.info(f"Successfully extracted {len(full_text)} characters from PDF")
-                return full_text.strip()
-            else:
-                raise ValueError("No text content found in PDF")
-
-        except Exception as e:
-            logger.error(f"PyPDF2 parsing failed: {e}")
-            raise ValueError(f"Failed to parse PDF: {str(e)}")
-
-    else:
-        raise ValueError("Unsupported file format")
-
-def extract_text_from_docx_advanced(file):
-    """
-    Advanced DOCX text extraction with better handling of complex resume layouts.
-    Extracts text from document.xml and includes potential resume section detection.
+    Parse a PDF or DOCX file and extract structured content.
+    Returns a dictionary with full_text and projects (if applicable).
     """
     try:
-        # Read DOCX as ZIP file
-        with zipfile.ZipFile(file, 'r') as docx_zip:
-            # Extract document.xml
-            doc_xml = docx_zip.read('word/document.xml')
-            root = ET.fromstring(doc_xml)
+        full_text = ""
+        projects = []
 
-            text = []
-            current_section = "General"
+        if filename.endswith('.pdf'):
+            reader = PyPDF2.PdfReader(file)
+            for page in reader.pages:
+                text = page.extract_text() or ""
+                full_text += text + "\n"
+            logger.info(f"Extracted {len(full_text)} characters from PDF {filename}")
 
-            # Common resume section headers (case-insensitive)
-            section_headers = [
-                r'education\b', r'experience\b', r'work experience\b', r'skills\b',
-                r'projects\b', r'certifications\b', r'awards\b', r'publications\b',
-                r'objective\b', r'summary\b', r'professional summary\b'
-            ]
-            section_regex = re.compile('|'.join(section_headers), re.IGNORECASE)
+        elif filename.endswith('.docx'):
+            full_text = docx2txt.process(file)
+            logger.info(f"Successfully extracted {len(full_text)} characters from DOCX {filename}")
 
-            # Extract all text nodes
-            for elem in root.iter():
-                if elem.text and elem.text.strip():
-                    text_content = elem.text.strip()
-                    # Identify section headers
-                    if section_regex.search(text_content):
-                        current_section = text_content
-                        text.append(f"\n[SECTION: {current_section}]\n")
-                    else:
-                        # Remove bullet symbols
-                        cleaned_text = re.sub(r'^\s*[-•*]\s+', '', text_content)
-                        if cleaned_text:
-                            text.append(f"{cleaned_text}\n")
+        else:
+            logger.error(f"Unsupported file format: {filename}")
+            raise ValueError("Unsupported file format. Only PDF and DOCX are supported.")
 
-            # Clean up the text
-            full_text = "".join(text)
-            full_text = re.sub(r'\n+', '\n', full_text)  # Remove multiple newlines
-            full_text = re.sub(r'[ \t]+', ' ', full_text)  # Normalize spaces
+        # Basic structuring of the document
+        structured_text = "[SECTION: General]\n" + full_text
 
-            return full_text.strip()
+        # Extract projects (mainly for resumes, may not apply to job descriptions)
+        project_section = re.search(r'(?:Projects|Experience|Work\s+History)(.*?)(?=\n[A-Z][a-zA-Z\s]+:|\Z)', full_text, re.DOTALL | re.IGNORECASE)
+        if project_section:
+            project_text = project_section.group(1).strip()
+            project_entries = re.split(r'\n\s*(?=[A-Za-z0-9\s\-]+(?:\s*\d{4}\s*(?:[-–]\s*(?:Present|\d{4}))?)?\s*(?=\n\s*[-•]))', project_text)
+            structured_text += "\n[SECTION: Projects]\n"
+            
+            for entry in project_entries:
+                entry = entry.strip()
+                if entry:
+                    structured_text += f"PROJECT ENTRY: {entry}\n"
+                    # Extract project details
+                    lines = entry.split('\n')
+                    name_line = lines[0].strip()
+                    name_match = re.match(r'^(.*?)(?:\s*[-–]\s*\d{4}(?:\s*[-–]\s*(?:Present|\d{4}))?)?$', name_line)
+                    project_name = name_match.group(1).strip() if name_match else "Unnamed Project"
+                    description = "\n".join(line.strip() for line in lines[1:] if line.strip())
+                    
+                    # Extract skills from description
+                    skill_keywords = [
+                        'Python', 'Java', 'JavaScript', 'React', 'Node.js', 'AWS', 'Docker', 'Kubernetes',
+                        'GCP', 'Azure', 'Terraform', 'CI/CD', 'Git', 'SQL', 'MongoDB', 'Redis',
+                        'GraphQL', 'Microservices', 'DevOps', 'Machine Learning', 'TensorFlow', 'PyTorch'
+                    ]
+                    skills = []
+                    for line in lines[1:]:
+                        for skill in skill_keywords:
+                            if re.search(rf'\b{skill}\b', line, re.IGNORECASE) and skill not in skills:
+                                skills.append(skill)
+                    
+                    projects.append({
+                        "name": project_name,
+                        "description": description,
+                        "skills": skills
+                    })
+
+        # Extract skills section (if present)
+        skills_section = re.search(r'Skills(.*?)(?=\n[A-Z][a-zA-Z\s]+:|\Z)', full_text, re.DOTALL | re.IGNORECASE)
+        if skills_section:
+            structured_text += "\n[SECTION: Skills]\n" + skills_section.group(1).strip()
+
+        # Extract experience section for years of experience
+        experience_section = re.search(r'Experience(.*?)(?=\n[A-Z][a-zA-Z\s]+:|\Z)', full_text, re.DOTALL | re.IGNORECASE)
+        if experience_section:
+            structured_text += "\n[SECTION: Experience]\n" + experience_section.group(1).strip()
+
+        return {
+            "full_text": structured_text,
+            "projects": projects
+        }
 
     except Exception as e:
-        logger.error(f"Advanced DOCX extraction failed: {e}")
-        return None
+        logger.error(f"Error parsing document {filename}: {e}")
+        raise
